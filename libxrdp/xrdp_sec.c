@@ -842,38 +842,46 @@ xrdp_sec_process_logon_info(struct xrdp_sec *self, struct stream *s)
     }
     DEBUG(("directory %s", self->rdp_layer->client_info.directory));
 
-    if (flags & RDP_LOGON_BLOB)
+    /* MS-RDPBCGR 2.2.1.11.1.1.1 Extended Info Packet */
+    if (!s_check_rem(s, 4))         /* extraInfo exist? */
     {
-        if (!s_check_rem(s, 4))
-        {
-            return 1;
-        }
-        in_uint8s(s, 2);                                    /* unknown */
-        in_uint16_le(s, len_ip);
-        if (unicode_utf16_in(s, len_ip - 2, tmpdata, sizeof(tmpdata) - 1) != 0)
-        {
-            return 1;
-        }
-        if (!s_check_rem(s, 2))
-        {
-            return 1;
-        }
-        in_uint16_le(s, len_dll);
-        if (unicode_utf16_in(s, len_dll - 2, tmpdata, sizeof(tmpdata) - 1) != 0)
-        {
-            return 1;
-        }
-        if (!s_check_rem(s, 4 + 62 + 22 + 62 + 26 + 4))
-        {
-            return 1;
-        }
-        in_uint8s(s, 4);                                    /* len of timezone */
-        in_uint8s(s, 62);                                   /* skip */
-        in_uint8s(s, 22);                                   /* skip misc. */
-        in_uint8s(s, 62);                                   /* skip */
-        in_uint8s(s, 26);                                   /* skip stuff */
-        in_uint32_le(s, self->rdp_layer->client_info.rdp5_performanceflags);
+        return 0;
     }
+    in_uint8s(s, 2);                /* clientAddressFamily */
+    in_uint16_le(s, len_ip);        /* cbClientAddress */
+    if (unicode_utf16_in(s, len_ip - 2, tmpdata, sizeof(tmpdata) - 1) != 0) /* clientAddress */
+    {
+        return 1;
+    }
+    if (!s_check_rem(s, 2))
+    {
+        return 1;
+    }
+    in_uint16_le(s, len_dll);       /* cbClientDir */
+    if (unicode_utf16_in(s, len_dll - 2, tmpdata, sizeof(tmpdata) - 1) != 0) /* clientDir */
+    {
+        return 1;
+    }
+
+    /* optional: clientTimeZone, clientSessionId, performanceFlags */
+    if (!s_check_rem(s, 172 + 4 + 4))
+    {
+        return 0;
+    }
+    in_uint8s(s, 172);
+    in_uint8s(s, 4);
+    in_uint32_le(s, self->rdp_layer->client_info.rdp5_performanceflags);
+
+    /* optional: cbAutoReconnectCookie, autoReconnectCookie */
+    if (!s_check_rem(s, 2 + 28))
+    {
+        return 0;
+    }
+    in_uint16_le(s, self->rdp_layer->client_info.cb_auto_reconnect_cookie);
+    in_uint32_le(s, self->rdp_layer->client_info.client_cookie.cb_len);
+    in_uint32_le(s, self->rdp_layer->client_info.client_cookie.version);
+    in_uint32_le(s, self->rdp_layer->client_info.client_cookie.logon_id);
+    in_uint8a(s, self->rdp_layer->client_info.client_cookie.security_verifier, 16);
 
     DEBUG(("out xrdp_sec_process_logon_info"));
     return 0;

@@ -40,6 +40,8 @@
   while (0)
 
 #define AS_LOG_MESSAGE log_message
+#define min(x, y) ((x) < (y) ? (x) : (y))
+
 
 static int
 lib_mod_process_message(struct vnc *v, struct stream *s);
@@ -583,6 +585,28 @@ make_color(int r, int g, int b, int bpp)
     return 0;
 }
 
+static int read_pixel(struct stream *s, int Bpp, int *value)
+{
+    int pixel;
+
+    switch (Bpp) {
+        case 1:
+            in_uint8(s, pixel);
+            break;
+        case 2:
+            in_uint16_be(s, pixel);  //注意可能有问题
+            break;
+        case 4:
+            in_uint32_be(s, pixel);
+            break;
+        default:
+            return -1;
+    }
+
+    *value = pixel;
+    return 0;
+}
+
 /******************************************************************************/
 int
 lib_framebuffer_update(struct vnc *v)
@@ -652,6 +676,8 @@ lib_framebuffer_update(struct vnc *v)
             in_uint16_be(s, cy);
             in_uint32_be(s, encoding);
 
+            log_message(LOG_LEVEL_INFO, "%d %d %d %d encoding %d", x, y, cx, cy, encoding);
+
             if (encoding == 0) /* raw */
             {
                 need_size = cx * cy * Bpp;
@@ -660,7 +686,23 @@ lib_framebuffer_update(struct vnc *v)
 
                 if (error == 0)
                 {
-                    error = v->server_paint_rect(v, x, y, cx, cy, pixel_s->data, cx, cy, 0, 0);
+                    if (need_size < 1 * 1024 * 1024)
+                    {
+                        error = v->server_paint_rect(v, x, y, cx, cy, pixel_s->data, cx, cy, 0, 0);
+                    }
+                    else
+                    {
+                        int px, py, pcx, pcy;
+                        int detal = (1024 * 1024) / (Bpp * cx);
+                        int ii = 0;
+
+                        for(ii = 0; ii < cy; ii += detal)
+                        {
+                            pcy = min(detal, cy-ii);
+                            log_message(LOG_LEVEL_INFO, "split: %d %d %d %d", x, y+ii, cx, pcy);
+                            v->server_paint_rect(v, x, y+ii, cx, pcy, pixel_s->data + (ii * Bpp * cx), cx, pcy, 0, 0);
+                        }
+                    }
                 }
             }
             else if (encoding == 1) /* copy rect */
@@ -674,6 +716,116 @@ lib_framebuffer_update(struct vnc *v)
                     in_uint16_be(s, srcy);
                     error = v->server_screen_blt(v, x, y, cx, cy, srcx, srcy);
                 }
+            }
+            else if (encoding == 2) /* rre */
+            {
+                int num_subrecs;
+                int color;
+                int subi;
+                int subx, suby, subw, subh;
+
+                init_stream(pixel_s, Bpp + 4);
+                trans_force_read_s(v->trans, pixel_s, Bpp + 4);
+
+                in_uint32_be(pixel_s, num_subrecs);
+                read_pixel(pixel_s, Bpp, &color);
+                v->server_set_fgcolor(v, color);
+                v->server_fill_rect(v, x, y, cx, cy);
+
+                init_stream(pixel_s, num_subrecs * (Bpp + 8));
+                trans_force_read_s(v->trans, pixel_s, num_subrecs * (Bpp + 8));
+                for (subi = 0; subi < num_subrecs; subi++)
+                {
+                    read_pixel(pixel_s, Bpp, &color);
+                    in_uint16_be(pixel_s, subx);
+                    in_uint16_be(pixel_s, suby);
+                    in_uint16_be(pixel_s, subw);
+                    in_uint16_be(pixel_s, subh);
+
+                    if ((subi & 0xFF) == 0)
+                    {
+                        v->server_end_update(v);
+                        v->server_begin_update(v);
+                    }
+
+                    v->server_set_fgcolor(v, color);
+                    v->server_fill_rect(v, subx+x, suby+y, subw, subh);
+                }
+            }
+            else if (encoding == 5)
+            {
+                int subx, suby, subw, subh;
+                int sub_encoding;
+                int bg, fg, subrect_color;
+                int num_subrecs;
+                int ii, xy, wh;
+                int anyrect_size;
+
+                for (suby = y; suby < y + cy; suby += 16)
+                {
+                    subh = min(y + cy, suby + 16) - suby;
+                    v->server_end_update(v);
+                    v->server_begin_update(v);
+                    for (subx = x; subx < x + cx; subx += 16)
+                    {
+                        subw = min(x + cx, subx + 16) - subx;
+
+                        init_stream(pixel_s, 8192);
+                        trans_force_read_s(v->trans, pixel_s, 1);
+                        in_uint8(pixel_s, sub_encoding);
+
+                        if (sub_encoding & 0x01)
+                        {
+                            init_stream(pixel_s, subw * subh * Bpp);
+                            trans_force_read_s(v->trans, pixel_s, subw * subh * Bpp);
+                            v->server_paint_rect(v, subx, suby, subw, subh, pixel_s->data, subw, subh, 0, 0);
+                            continue;
+                        }
+                        if (sub_encoding & 0x02)
+                        {
+                            trans_force_read_s(v->trans, pixel_s, Bpp);
+                            read_pixel(pixel_s, Bpp, &bg);
+                        }
+                        if (sub_encoding & 0x04)
+                        {
+                            trans_force_read_s(v->trans, pixel_s, Bpp);
+                            read_pixel(pixel_s, Bpp, &fg);
+                        }
+
+                        v->server_set_fgcolor(v, bg);
+                        v->server_fill_rect(v, subx, suby, subw, subh);
+                        if ((sub_encoding & 0x8) == 0)
+                        {
+                            continue;
+                        }
+
+                        trans_force_read_s(v->trans, pixel_s, 1);
+                        in_uint8(pixel_s, num_subrecs);
+                        v->server_set_fgcolor(v, fg);
+
+                        anyrect_size = 2 * num_subrecs;
+                        if (sub_encoding & 0x10)
+                        {
+                            anyrect_size += Bpp * num_subrecs;
+                        }
+
+                        init_stream(pixel_s, anyrect_size);
+                        trans_force_read_s(v->trans, pixel_s, anyrect_size);
+                        for (ii = 0; ii < num_subrecs; ii ++)
+                        {
+                            if (sub_encoding & 0x10)
+                            {
+                                read_pixel(pixel_s, Bpp, &subrect_color);
+                                v->server_set_fgcolor(v, subrect_color);
+                            }
+                            in_uint8(pixel_s, xy);
+                            in_uint8(pixel_s, wh);
+
+                            v->server_fill_rect(v, subx + ((xy&0xF0) >> 4), suby + (xy&0x0F), ((wh&0xF0) >> 4)+1, (wh&0x0F)+1);
+                        }
+                    }
+                }
+
             }
             else if (encoding == 0xffffff11) /* cursor */
             {
@@ -1323,9 +1475,11 @@ lib_mod_connect(struct vnc *v)
         init_stream(s, 8192);
         out_uint8(s, 2);
         out_uint8(s, 0);
-        out_uint16_be(s, 4);
+        out_uint16_be(s, 6);
         out_uint32_be(s, 0); /* raw */
+        out_uint32_be(s, 5); /* Hextile */
         out_uint32_be(s, 1); /* copy rect */
+        out_uint32_be(s, 2); /* rre */
         out_uint32_be(s, 0xffffff11); /* cursor */
         out_uint32_be(s, 0xffffff21); /* desktop size */
         v->server_msg(v, "VNC sending encodings", 0);

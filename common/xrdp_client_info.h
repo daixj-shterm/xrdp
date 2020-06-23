@@ -30,6 +30,14 @@ struct monitor_info
   int is_primary;
 };
 
+struct auto_reconnect_cookie
+{
+  int cb_len;
+  int version;
+  int logon_id;
+  char security_verifier[16];
+};
+
 struct xrdp_client_info
 {
   int size; /* bytes for this structure */
@@ -156,6 +164,9 @@ struct xrdp_client_info
   int no_orders_supported;
   int use_cache_glyph_v2;
   int rail_enable;
+
+  int cb_auto_reconnect_cookie;
+  struct auto_reconnect_cookie client_cookie;
 };
 
 #endif

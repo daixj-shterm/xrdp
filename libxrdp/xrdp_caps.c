@@ -300,6 +300,8 @@ xrdp_caps_process_pointer(struct xrdp_rdp *self, struct stream *s,
     in_uint16_le(s, colorPointerFlag);
     self->client_info.pointer_flags = colorPointerFlag;
     in_uint16_le(s, i);
+    g_writeln("xrdp_caps_process_pointer: colorPointerFlag %d pointer_cache_entries %d",
+              colorPointerFlag, i);
     i = MIN(i, 32);
     self->client_info.pointer_cache_entries = i;
     if (colorPointerFlag & 1)
@@ -307,6 +309,7 @@ xrdp_caps_process_pointer(struct xrdp_rdp *self, struct stream *s,
         g_writeln("xrdp_caps_process_pointer: client supports "
                   "new(color) cursor");
         in_uint16_le(s, i);
+        g_writeln("xrdp_caps_process_pointer: color pointer_cache_entries %d", i);
         i = MIN(i, 32);
         self->client_info.pointer_cache_entries = i;
     }
@@ -687,7 +690,7 @@ xrdp_caps_process_confirm_active(struct xrdp_rdp *self, struct stream *s)
                 DEBUG(("RDP_CAPSET_GLYPHCACHE"));
                 xrdp_caps_process_glyphcache(self, s, len);
                 break;
-            case CAPSTYPE_BITMAPCACHE_HOSTSUPPORT:
+            case CAPSTYPE_OFFSCREENCACHE:
                 DEBUG(("CAPSET_TYPE_OFFSCREEN_CACHE"));
                 xrdp_caps_process_offscreen_bmpcache(self, s, len);
                 break;

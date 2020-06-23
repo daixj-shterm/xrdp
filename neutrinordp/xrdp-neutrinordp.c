@@ -1266,12 +1266,12 @@ lfreerdp_pointer_new(rdpContext *context,
     tui8 *src;
 
     mod = ((struct mod_context *)context)->modi;
-    LLOGLN(20, ("lfreerdp_pointer_new:"));
-    LLOGLN(20, ("  bpp %d", pointer_new->xorBpp));
-    LLOGLN(20, ("  width %d height %d", pointer_new->colorPtrAttr.width,
+    LLOGLN(0, ("lfreerdp_pointer_new:"));
+    LLOGLN(0, ("  index %d bpp %d", pointer_new->colorPtrAttr.cacheIndex, pointer_new->xorBpp));
+    LLOGLN(0, ("  width %d height %d", pointer_new->colorPtrAttr.width,
                 pointer_new->colorPtrAttr.height));
 
-    LLOGLN(20, ("  lengthXorMask %d lengthAndMask %d",
+    LLOGLN(0, ("  lengthXorMask %d lengthAndMask %d",
                 pointer_new->colorPtrAttr.lengthXorMask,
                 pointer_new->colorPtrAttr.lengthAndMask));
 
@@ -1350,7 +1350,7 @@ lfreerdp_pointer_cached(rdpContext *context,
 
     mod = ((struct mod_context *)context)->modi;
     index = pointer_cached->cacheIndex;
-    LLOGLN(10, ("lfreerdp_pointer_cached:%d", index));
+    LLOGLN(0, ("lfreerdp_pointer_cached:%d", index));
     mod->server_set_pointer_ex(mod, mod->pointer_cache[index].hotx,
                                mod->pointer_cache[index].hoty,
                                mod->pointer_cache[index].data,
@@ -1440,6 +1440,7 @@ lfreerdp_pre_connect(freerdp *instance)
     int ch_flags;
     char ch_name[256];
     char *dst_ch_name;
+    ARC_CS_PRIVATE_PACKET* autoReconnectCookie;
 
     LLOGLN(0, ("lfreerdp_pre_connect:"));
     mod = ((struct mod_context *)(instance->context))->modi;
@@ -1596,6 +1597,17 @@ lfreerdp_pre_connect(freerdp *instance)
     else
     {
         instance->settings->nla_security = 0;
+    }
+
+    if (mod->client_info.cb_auto_reconnect_cookie > 0)
+    {
+        instance->settings->auto_reconnection = 1;
+        autoReconnectCookie = instance->settings->client_auto_reconnect_cookie;
+        autoReconnectCookie->cbLen = mod->client_info.client_cookie.cb_len;
+        autoReconnectCookie->version = mod->client_info.client_cookie.version;
+        autoReconnectCookie->logonId = mod->client_info.client_cookie.logon_id;
+        g_memcpy(autoReconnectCookie->securityVerifier,
+                 mod->client_info.client_cookie.security_verifier, 16);
     }
 
     return 1;
